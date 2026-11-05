@@ -1,0 +1,81 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Conexión con Vesta/Climax Local",
+        "description": "Introduce los datos de conexión de tu central de alarma Vesta/Climax.",
+        "data": {
+          "host": "Host (dirección IP o nombre)",
+          "username": "Usuario",
+          "password": "Contraseña",
+          "use_ssl": "Usar HTTPS"
+        },
+        "data_description": {
+          "host": "Dirección IP o nombre de la central (por ejemplo, 192.168.1.100)",
+          "username": "Usuario de la web de la central (normalmente 'admin')",
+          "password": "Contraseña de la web de la central",
+          "use_ssl": "Actívalo si accedes a la central por HTTPS (por ejemplo, con un proxy inverso)"
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "Central Vesta/Climax encontrada",
+        "description": "Se ha encontrado una central Vesta/Climax ({name}) en {host}. Introduce las credenciales para terminar.",
+        "data": {
+          "username": "Usuario",
+          "password": "Contraseña",
+          "use_ssl": "Usar HTTPS"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Volver a autenticar la central Vesta/Climax",
+        "description": "Ha fallado la autenticación con {host}. Introduce las credenciales nuevas.",
+        "data": {
+          "username": "Usuario",
+          "password": "Contraseña"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "No se puede conectar con la central. Comprueba la dirección y la red.",
+      "invalid_auth": "Usuario o contraseña incorrectos.",
+      "unknown": "Error desconocido."
+    },
+    "abort": {
+      "already_configured": "Esta central ya está configurada.",
+      "reauth_successful": "Autenticación renovada correctamente."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opciones de Vesta/Climax Local",
+        "description": "Cambia las credenciales de la central y elige si se guardan las fotos de las cámaras.",
+        "data": {
+          "username": "Usuario",
+          "password": "Contraseña",
+          "use_ssl": "Usar HTTPS",
+          "save_captures": "Guardar las fotos de las cámaras en una carpeta",
+          "capture_dir": "Carpeta de las fotos"
+        },
+        "data_description": {
+          "save_captures": "La central guarda las fotos en memoria temporal y las pierde al reiniciarse. Si lo activas, cada foto se guarda como <carpeta>/<AAAA-MM-DD>/<HHMMSS>_zone<N>_<n>.jpg.",
+          "capture_dir": "Ruta absoluta dentro de Home Assistant. Añade su carpeta superior a media_dirs para ver las fotos en Multimedia."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "No se puede conectar con la central. Comprueba la dirección y la red.",
+      "invalid_auth": "Usuario o contraseña incorrectos.",
+      "unknown": "Error desconocido.",
+      "invalid_capture_dir": "Escribe una ruta absoluta, por ejemplo /config/media/vesta.",
+      "capture_dir_not_writable": "No se puede crear la carpeta o escribir en ella."
+    }
+  },
+  "entity": {
+    "image": {
+      "last_capture": {
+        "name": "Última foto"
+      }
+    }
+  }
+}

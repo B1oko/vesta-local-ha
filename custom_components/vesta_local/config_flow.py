@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import voluptuous as vol
@@ -21,7 +22,15 @@ from .client import (
     VestaConnectionError,
     VestaLocalClient,
 )
-from .const import CONF_USE_SSL, DOMAIN, INTEGRATION_TITLE
+from .const import (
+    CONF_CAPTURE_DIR,
+    CONF_SAVE_CAPTURES,
+    CONF_USE_SSL,
+    DEFAULT_CAPTURE_SUBDIR,
+    DEFAULT_SAVE_CAPTURES,
+    DOMAIN,
+    INTEGRATION_TITLE,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -298,32 +307,58 @@ class VestaLocalOptionsFlow(OptionsFlow):
         """Handle the options flow init step."""
         errors: dict[str, str] = {}
 
+        current_data = self.config_entry.data
+        current_options = self.config_entry.options
+        default_dir = self.hass.config.path(*DEFAULT_CAPTURE_SUBDIR)
+
         if user_input is not None:
-            host = self.config_entry.data[CONF_HOST]
+            host = current_data[CONF_HOST]
             username = user_input[CONF_USERNAME]
             password = user_input[CONF_PASSWORD]
             use_ssl = user_input.get(CONF_USE_SSL, False)
+            save_captures = user_input.get(CONF_SAVE_CAPTURES, DEFAULT_SAVE_CAPTURES)
+            capture_dir = (user_input.get(CONF_CAPTURE_DIR) or default_dir).strip()
 
-            # Test connection with new credentials
-            client = VestaLocalClient(
-                host=host,
-                username=username,
-                password=password,
-                verify_ssl=False,
-                use_ssl=use_ssl,
+            credentials_changed = (
+                username != current_data.get(CONF_USERNAME)
+                or password != current_data.get(CONF_PASSWORD)
+                or use_ssl != current_data.get(CONF_USE_SSL, False)
             )
-            try:
-                await client.authenticate()
-            except VestaAuthenticationError:
-                errors["base"] = "invalid_auth"
-            except VestaConnectionError:
-                errors["base"] = "cannot_connect"
-            except Exception:
-                errors["base"] = "unknown"
-            finally:
-                await client.close()
+            if credentials_changed:
+                # Test connection with new credentials
+                client = VestaLocalClient(
+                    host=host,
+                    username=username,
+                    password=password,
+                    verify_ssl=False,
+                    use_ssl=use_ssl,
+                )
+                try:
+                    await client.authenticate()
+                except VestaAuthenticationError:
+                    errors["base"] = "invalid_auth"
+                except VestaConnectionError:
+                    errors["base"] = "cannot_connect"
+                except Exception:
+                    errors["base"] = "unknown"
+                finally:
+                    await client.close()
+
+            if save_captures and not errors:
+                if not os.path.isabs(capture_dir):
+                    errors[CONF_CAPTURE_DIR] = "invalid_capture_dir"
+                elif not await self.hass.async_add_executor_job(
+                    _ensure_writable_dir, capture_dir
+                ):
+                    errors[CONF_CAPTURE_DIR] = "capture_dir_not_writable"
 
             if not errors:
+                options = {
+                    CONF_SAVE_CAPTURES: save_captures,
+                    CONF_CAPTURE_DIR: capture_dir,
+                }
+                # One update for data and options: the update listener then
+                # reloads the integration once, with the new values.
                 self.hass.config_entries.async_update_entry(
                     self.config_entry,
                     data={
@@ -332,25 +367,30 @@ class VestaLocalOptionsFlow(OptionsFlow):
                         CONF_PASSWORD: password,
                         CONF_USE_SSL: use_ssl,
                     },
+                    options=options,
                 )
-                await self.hass.config_entries.async_reload(
-                    self.config_entry.entry_id
-                )
-                return self.async_create_entry(title="", data={})
+                return self.async_create_entry(title="", data=options)
 
         # Pre-fill with current values
-        current = self.config_entry.data
         schema = vol.Schema(
             {
                 vol.Required(
-                    CONF_USERNAME, default=current.get(CONF_USERNAME, "")
+                    CONF_USERNAME, default=current_data.get(CONF_USERNAME, "")
                 ): str,
                 vol.Required(
-                    CONF_PASSWORD, default=current.get(CONF_PASSWORD, "")
+                    CONF_PASSWORD, default=current_data.get(CONF_PASSWORD, "")
                 ): str,
                 vol.Optional(
-                    CONF_USE_SSL, default=current.get(CONF_USE_SSL, False)
+                    CONF_USE_SSL, default=current_data.get(CONF_USE_SSL, False)
                 ): bool,
+                vol.Optional(
+                    CONF_SAVE_CAPTURES,
+                    default=current_options.get(CONF_SAVE_CAPTURES, DEFAULT_SAVE_CAPTURES),
+                ): bool,
+                vol.Optional(
+                    CONF_CAPTURE_DIR,
+                    default=current_options.get(CONF_CAPTURE_DIR) or default_dir,
+                ): str,
             }
         )
 
@@ -359,3 +399,12 @@ class VestaLocalOptionsFlow(OptionsFlow):
             data_schema=schema,
             errors=errors,
         )
+
+
+def _ensure_writable_dir(path: str) -> bool:
+    """Create the folder if needed and check that it can be written."""
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError:
+        return False
+    return os.access(path, os.W_OK)

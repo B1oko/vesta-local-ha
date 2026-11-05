@@ -1,10 +1,12 @@
 # 🏠 Vesta/Climax Local Integration for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
-[![GitHub Release](https://img.shields.io/github/v/release/mphel44/vesta-local-ha)](https://github.com/mphel44/vesta-local-ha/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/B1oko/vesta-local-ha)](https://github.com/B1oko/vesta-local-ha/releases)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 A Home Assistant custom integration for **local control** of Vesta/Climax alarm panels (HSGW-MAX series and compatible models). This integration communicates directly with your panel over your local network - **no cloud required**.
+
+> **Fork note**: this is a fork of [mphel44/vesta-local-ha](https://github.com/mphel44/vesta-local-ha) that adds camera photos, motion for wired PIRs from the event log and a few fixes (see [Changes in this fork](#-changes-in-this-fork)). The domain (`vesta_local`) and entity unique IDs are unchanged, so an existing installation keeps its entities when switching the HACS repository.
 
 ## 🙏 Acknowledgements
 
@@ -20,6 +22,8 @@ This integration is inspired by [koying's smarthomesec_ha](https://github.com/ko
 - 🔋 **Device Battery Monitoring** - Dedicated battery status sensor for each wireless device
 - 📜 **Event Log** - Access the panel's event history
 - 📋 **Per-device Event Log** - Each device gets a "Last Event" sensor with its full event history
+- 📷 **Camera photos** - Last photo of each PIR camera as an `image` entity, optional saving to a folder and a `vesta_local_capture` event for notifications
+- 🏃 **Wired PIR motion** - Motion detectors that never report a status turn on from the panel event log
 
 ## 📦 Installation
 
@@ -28,7 +32,7 @@ This integration is inspired by [koying's smarthomesec_ha](https://github.com/ko
 1. Open HACS in Home Assistant
 2. Click on "Integrations"
 3. Click the three dots menu (top right) and select "Custom repositories"
-4. Add this repository URL: `https://github.com/mphel44/vesta-local-ha`
+4. Add this repository URL: `https://github.com/B1oko/vesta-local-ha`
 5. Select "Integration" as the category
 6. Click "Add"
 7. Search for "Vesta/Climax Local" and install it
@@ -36,7 +40,7 @@ This integration is inspired by [koying's smarthomesec_ha](https://github.com/ko
 
 ### Manual Installation
 
-1. Download the latest release from the [releases page](https://github.com/mphel44/vesta-local-ha/releases)
+1. Download the latest release from the [releases page](https://github.com/B1oko/vesta-local-ha/releases)
 2. Extract the `custom_components/vesta_local` folder to your Home Assistant `config/custom_components/` directory
 3. Restart Home Assistant
 
@@ -92,6 +96,46 @@ The integration monitors reported events from the panel to detect alarm triggers
 
 The triggered state automatically resets when a new event occurs (disarm or restore).
 
+## 📷 Camera Photos
+
+PIR cameras (device type 27, "IR Camera") take a burst of photos (6 × 320×240 JPEG on a Hybrid Panel Lite) when the alarm triggers. The photos reach the panel over the radio 10 to 20 seconds after the trigger and are kept in `/temp/download/`, which the panel loses when it restarts.
+
+- **Image entity** `Last photo` per camera (unique ID `<entry_id>_<device_id>_last_capture`): the last photo of the most recent capture. Attributes: `time`, `type`, `status`, `zone`, `area`, `photo_count`, `files` (panel paths), `photo` (the one shown) and `saved_files`.
+- **Polling**: the capture list (`captureEventListGet`) is read every 60 s, and every 5 s for 90 s after a new alarm event in the event log or reported events, until the capture is `Done`.
+- **Saving (option, off by default)**: in the integration options enable *Save camera photos to a folder*. Default folder: `<config>/media/vesta` (`/config/media/vesta` in the container). Layout: `<folder>/<YYYY-MM-DD>/<HHMMSS>_zone<N>_<n>.jpg`. Already saved files are remembered (in `.storage/vesta_local.captures_<entry_id>`), so photos are not saved twice after restarts even though the panel reuses its capture ids. To browse them in **Media**, add the folder to `media_dirs`:
+
+  ```yaml
+  homeassistant:
+    media_dirs:
+      local: /media
+      vesta: /config/media/vesta
+  ```
+
+- **Event** `vesta_local_capture`, fired once per capture when all its photos have arrived (or after 2 minutes with the photos that arrived). Captures already on the panel when Home Assistant starts, or older than 15 minutes, do not fire it. Data: `entry_id`, `device_id`, `area`, `zone`, `time`, `type`, `status`, `photo_count`, `files`, `saved_files` and `entity_id` (the image entity).
+
+Example notification with the photo:
+
+```yaml
+automation:
+  - alias: Alarm photo
+    triggers:
+      - trigger: event
+        event_type: vesta_local_capture
+    actions:
+      - action: notify.mobile_app_my_phone
+        data:
+          title: Alarm
+          message: "Camera zone {{ trigger.event.data.zone }} at {{ trigger.event.data.time }}"
+          data:
+            image: "/api/image_proxy/{{ trigger.event.data.entity_id }}"
+```
+
+The integration never deletes captures from the panel.
+
+## 🏃 Wired PIR Motion
+
+Some panels (e.g. Hybrid Panel Lite) never report a `status` for wired PIRs in `deviceListGet`. Such devices are reported as `off` instead of `unknown`, and motion sensors turn `on` for 30 s after an event log entry with action `Response` for their zone (`Zone1(Comedor)`, `Zone3`...; messages such as `Burglar Alarm`, `Follow`, `Start Entry 1`). The panel only logs these while armed, so a disarmed panel shows no motion. The last such entry is in the `last_log_motion` and `last_log_motion_msg` attributes.
+
 ## 🎛️ Supported Devices
 
 ### Alarm Panel
@@ -103,6 +147,7 @@ The triggered state automatically resets when a new event occurs (disarm or rest
 |-------------|----------------------|
 | 🚪 Door Contact | Binary Sensor (Door) |
 | 🏃 PIR / IR Motion | Binary Sensor (Motion) |
+| 📷 IR Camera (PIR camera) | Binary Sensor (Motion) + Image (last photo) |
 | 🔥 Smoke Detector | Binary Sensor (Smoke) |
 | 💨 CO Detector | Binary Sensor (CO) |
 | 💧 Water Leak Sensor | Binary Sensor (Moisture) |
@@ -127,12 +172,32 @@ The triggered state automatically resets when a new event occurs (disarm or rest
 | `/action/panelCondPost` | Set alarm mode |
 | `/action/logsGet` | Get event history (POST with `max_count`) |
 | `/action/reportEventListGet` | Get reported events for triggered state detection (POST with `max_count`) |
+| `/action/captureEventListGet` | Get camera captures and their photo files (POST with `max_count`) |
+| `/temp/download/<file>.jpg` | Capture photo (same Basic auth) |
 
 ### Polling
 
 - Default interval: 5 seconds
 - Panel status, device list, and event log are fetched concurrently for efficiency
 - Exponential backoff retry logic for network resilience
+
+## 🔀 Changes in this Fork
+
+**1.3.0**
+- Camera photos: `image` entity per PIR camera, optional saving to a folder (options flow) and `vesta_local_capture` event.
+- Idle devices with an empty status are `off` instead of `unknown` (upstream PR #7 by DistinctMotives), and motion sensors turn on from the event log.
+- PIR cameras ("IR Camera") get a motion binary sensor.
+- Zone devices are linked to the panel with `via_device_id` (the `via_device` tuple is deprecated and stops working in HA 2027.8).
+- The plain-text "Access Denied: Session expired!" answer is retried.
+- Options flow keeps the options; credentials are only re-tested when they change.
+- Spanish translation of the new options and entity.
+
+## 🧪 Tests
+
+```bash
+pip install pytest-homeassistant-custom-component
+pytest
+```
 
 ## 🤝 Contributing
 

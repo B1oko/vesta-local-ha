@@ -1,15 +1,21 @@
 {
   "domain": "vesta_local",
   "name": "Vesta/Climax Local",
-  "codeowners": ["@mphel44"],
+  "codeowners": [
+    "@mphel44",
+    "@B1oko"
+  ],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/mphel44/vesta-local-ha",
+  "documentation": "https://github.com/B1oko/vesta-local-ha",
   "integration_type": "hub",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/mphel44/vesta-local-ha/issues",
-  "requirements": ["pydantic>=2.0.0", "httpx>=0.25.0"],
-  "version": "1.2.1",
+  "issue_tracker": "https://github.com/B1oko/vesta-local-ha/issues",
+  "requirements": [
+    "pydantic>=2.0.0",
+    "httpx>=0.25.0"
+  ],
+  "version": "1.3.0",
   "zeroconf": [
     {
       "type": "_http._tcp.local.",

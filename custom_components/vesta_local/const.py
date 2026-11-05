@@ -8,6 +8,7 @@ from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 DOMAIN: Final = "vesta_local"
 INTEGRATION_TITLE: Final = "Vesta/Climax Local"
 MANUFACTURER: Final = "Climax Technology"
+PANEL_MODEL: Final = "HSGW-MAX"
 
 # Configuration keys
 CONF_HOST: Final = "host"
@@ -22,9 +23,34 @@ ENDPOINT_DEVICE_LIST: Final = "deviceListGet"
 ENDPOINT_PANEL_SET: Final = "panelCondPost"
 ENDPOINT_EVENT_LOG: Final = "logsGet"
 ENDPOINT_REPORTED_EVENTS: Final = "reportEventListGet"
+ENDPOINT_CAPTURE_LIST: Final = "captureEventListGet"
 
 # Polling configuration
 DEFAULT_SCAN_INTERVAL: Final = 5  # seconds
+
+# Camera captures (photos taken by PIR cameras when the alarm triggers)
+CONF_SAVE_CAPTURES: Final = "save_captures"
+CONF_CAPTURE_DIR: Final = "capture_dir"
+DEFAULT_SAVE_CAPTURES: Final = False
+DEFAULT_CAPTURE_SUBDIR: Final = ("media", "vesta")  # relative to the HA config dir
+CAPTURE_SCAN_INTERVAL: Final = 60  # seconds between routine capture list polls
+CAPTURE_BURST_DURATION: Final = 90  # seconds of fast polling after an alarm event
+CAPTURE_MAX_COUNT: Final = 10  # captures requested from the panel per poll
+CAPTURE_NOTIFY_MAX_AGE: Final = 900  # seconds; older captures never fire the event
+CAPTURE_PARTIAL_AGE: Final = 120  # seconds; notify an incomplete capture after this
+CAPTURE_STATUS_DONE: Final = "Done"
+CAPTURE_STORE_VERSION: Final = 1
+CAPTURE_STORE_MAX_FILES: Final = 1000
+CAPTURE_STORE_MAX_CAPTURES: Final = 200
+EVENT_CAPTURE: Final = "vesta_local_capture"
+# Device types that take photos (type_f text and numeric type)
+CAMERA_DEVICE_TYPES: Final[set[str]] = {"IR Camera", "PIR Camera"}
+CAMERA_DEVICE_TYPE_IDS: Final[set[int]] = {27}
+
+# Motion from the event log: wired PIRs never report a status in deviceListGet,
+# so a "Response" log entry for their zone turns them on for this many seconds.
+LOG_MOTION_ACTION: Final = "Response"
+LOG_MOTION_WINDOW: Final = 30  # seconds
 
 # Alarm mode mappings (Panel -> Home Assistant)
 ALARM_MODE_TO_STATE: dict[str, AlarmControlPanelState] = {
@@ -51,6 +77,7 @@ DEVICE_TYPE_NAMES: dict[str, str] = {
     "Door Contact": "Door Contact",
     "IR": "Motion Detector",
     "PIR": "Motion Detector",
+    "IR Camera": "PIR Camera",
     "Smoke Detector": "Smoke Detector",
     "CO Detector": "CO Detector",
     "Water Sensor": "Water Leak Sensor",
@@ -80,6 +107,7 @@ DEVICE_TYPE_TO_BINARY_SENSOR_CLASS: dict[str, BinarySensorDeviceClass] = {
     "Door Contact": BinarySensorDeviceClass.DOOR,
     "IR": BinarySensorDeviceClass.MOTION,
     "PIR": BinarySensorDeviceClass.MOTION,
+    "IR Camera": BinarySensorDeviceClass.MOTION,
     "Smoke Detector": BinarySensorDeviceClass.SMOKE,
     "CO Detector": BinarySensorDeviceClass.CO,
     "Water Sensor": BinarySensorDeviceClass.MOISTURE,

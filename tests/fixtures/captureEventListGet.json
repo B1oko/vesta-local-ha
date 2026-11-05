@@ -1,0 +1,10 @@
+{
+  "caprows": [
+{"uid": 0, "device_id": "IN:032a4e00", "area": "1", "zone": "3", "time": "2026-11-05 14:51:23", "status": "Done", "type": "Alarm", "comment": "No Packet Lost; No Packet Lost; No Packet Lost; No Packet Lost; No Packet Lost; No Packet Lost; ", "files": [ "/temp/download/032a4e00_2026-11-05_145113_001.jpg" ,
+ "/temp/download/032a4e00_2026-11-05_145123_002.jpg" ,
+ "/temp/download/032a4e00_2026-11-05_145123_003.jpg" ,
+ "/temp/download/032a4e00_2026-11-05_145123_004.jpg" ,
+ "/temp/download/032a4e00_2026-11-05_145123_005.jpg" ,
+ "/temp/download/032a4e00_2026-11-05_145123_006.jpg" ]}
+]
+}

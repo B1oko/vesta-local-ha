@@ -73,6 +73,37 @@
       "battery": {
         "name": "{device_name} Battery"
       }
+    },
+    "image": {
+      "last_capture": {
+        "name": "Last photo"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Vesta/Climax Local Options",
+        "description": "Update the credentials for your Vesta/Climax alarm panel and choose whether camera photos are saved.",
+        "data": {
+          "username": "Username",
+          "password": "Password",
+          "use_ssl": "Use HTTPS",
+          "save_captures": "Save camera photos to a folder",
+          "capture_dir": "Photo folder"
+        },
+        "data_description": {
+          "save_captures": "The panel keeps the photos in temporary memory and loses them when it restarts. When enabled, every photo is saved as <folder>/<YYYY-MM-DD>/<HHMMSS>_zone<N>_<n>.jpg.",
+          "capture_dir": "Absolute path inside Home Assistant. Add its parent to media_dirs to browse the photos in Media."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to the panel. Please check the host address and network connection.",
+      "invalid_auth": "Invalid username or password.",
+      "unknown": "An unknown error occurred.",
+      "invalid_capture_dir": "Enter an absolute path, e.g. /config/media/vesta.",
+      "capture_dir_not_writable": "The folder cannot be created or written."
     }
   }
 }

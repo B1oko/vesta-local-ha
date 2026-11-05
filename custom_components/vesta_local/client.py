@@ -14,7 +14,10 @@ import httpx
 from pydantic import BaseModel, Field, field_validator
 
 from .const import (
+    CAMERA_DEVICE_TYPE_IDS,
+    CAMERA_DEVICE_TYPES,
     DEFAULT_TIMEOUT,
+    ENDPOINT_CAPTURE_LIST,
     ENDPOINT_DEVICE_LIST,
     ENDPOINT_EVENT_LOG,
     ENDPOINT_LOGIN,
@@ -24,6 +27,11 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _is_session_expired(text: str) -> bool:
+    """Return True if the panel answered with its 'Session expired' page."""
+    return "session expired" in text[:200].lower()
 
 
 class DeviceStatus(BaseModel):
@@ -50,6 +58,7 @@ class DeviceStatus(BaseModel):
     tamper_ok: bool = Field(alias="tamper_ok")
     rssi: str
     device_id: str = Field(alias="id")
+    type_id: int | None = Field(default=None, alias="type")
 
     model_config = {"populate_by_name": True}
 
@@ -60,6 +69,23 @@ class DeviceStatus(BaseModel):
         if isinstance(value, bool):
             return value
         return str(value) == "1"
+
+    @field_validator("type_id", mode="before")
+    @classmethod
+    def parse_type_id(cls, value: Any) -> int | None:
+        """Parse the numeric device type, tolerating missing or odd values."""
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return None
+
+    @property
+    def is_camera(self) -> bool:
+        """Return True if the device takes photos (PIR camera)."""
+        return (
+            self.type_f in CAMERA_DEVICE_TYPES
+            or self.type_id in CAMERA_DEVICE_TYPE_IDS
+        )
 
 
 class PanelStatus(BaseModel):
@@ -152,6 +178,72 @@ class ReportedEvent(BaseModel):
             return 0
 
 
+class CaptureEvent(BaseModel):
+    """Represents a camera capture (a set of photos) stored on the panel.
+
+    Attributes:
+        uid: Panel row id; only valid for deleting and reused across reboots.
+        device_id: Camera device id (e.g. "IN:032a4e00").
+        area: Area number as text.
+        zone: Zone number as text.
+        time: Panel local time "YYYY-MM-DD HH:MM:SS" (no time zone).
+        status: Transfer status; "Done" once every photo has arrived.
+        type: Why the photos were taken (e.g. "Alarm").
+        comment: Panel comment (transfer details).
+        files: Panel paths of the files, e.g. "/temp/download/x_001.jpg".
+    """
+
+    uid: int = 0
+    device_id: str = ""
+    area: str = ""
+    zone: str = ""
+    time: str = ""
+    status: str = ""
+    type: str = ""
+    comment: str = ""
+    files: list[str] = Field(default_factory=list)
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("uid", mode="before")
+    @classmethod
+    def parse_uid(cls, value: Any) -> int:
+        """Parse uid to integer."""
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return 0
+
+    @field_validator("area", "zone", "time", "status", "type", "comment", "device_id", mode="before")
+    @classmethod
+    def parse_text(cls, value: Any) -> str:
+        """Coerce scalar fields to text (the panel mixes numbers and strings)."""
+        return "" if value is None else str(value)
+
+    @field_validator("files", mode="before")
+    @classmethod
+    def parse_files(cls, value: Any) -> list[str]:
+        """Keep only non-empty file paths."""
+        if not isinstance(value, list):
+            return []
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    @property
+    def image_files(self) -> list[str]:
+        """Return the JPEG files of the capture (videos are ignored)."""
+        return [f for f in self.files if f.lower().endswith((".jpg", ".jpeg"))]
+
+    @property
+    def key(self) -> str:
+        """Return a stable identity for the capture.
+
+        The panel's uid restarts from 0 and is reused, so the capture is
+        identified by camera, time and first file name instead.
+        """
+        first = self.files[0].rsplit("/", 1)[-1] if self.files else ""
+        return f"{self.device_id}|{self.time}|{first}"
+
+
 @dataclass
 class VestaData:
     """Container for all data retrieved from the panel.
@@ -217,7 +309,8 @@ class VestaLocalClient:
         self._client: httpx.AsyncClient | None = None
 
         protocol = "https" if use_ssl else "http"
-        self._base_url = f"{protocol}://{host}/action"
+        self._root_url = f"{protocol}://{host}"
+        self._base_url = f"{self._root_url}/action"
         self._headers = {
             "X-Requested-With": "XMLHttpRequest",
             "Referer": f"{protocol}://{host}/",
@@ -301,6 +394,17 @@ class VestaLocalClient:
                     try:
                         return response.json()
                     except Exception:
+                        # The panel sometimes answers "Access Denied: Session
+                        # expired!" as plain text; the next request works.
+                        if _is_session_expired(response.text) and attempt < retry_count:
+                            _LOGGER.debug(
+                                "Panel session expired, retrying %s (attempt %d/%d)",
+                                endpoint,
+                                attempt + 1,
+                                retry_count + 1,
+                            )
+                            last_error = VestaApiError("Session expired")
+                            continue
                         raise VestaApiError(
                             f"Unexpected response type '{content_type}' from {url}: {response.text[:200]}"
                         )
@@ -536,6 +640,90 @@ class VestaLocalClient:
         except Exception as err:
             _LOGGER.error("Failed to parse reported events: %s", err)
             raise VestaApiError(f"Failed to parse reported events: {err}") from err
+
+    async def get_captures(self, max_count: int = 10) -> list[CaptureEvent]:
+        """Get the camera captures stored on the panel.
+
+        Args:
+            max_count: Maximum number of captures to request. The panel web
+                page offers 10, 20, 50, 80 and 100.
+
+        Returns:
+            List of CaptureEvent objects as returned by the panel (newest
+            first on the panels seen so far).
+
+        Raises:
+            VestaConnectionError: If connection fails.
+            VestaApiError: If parsing fails.
+        """
+        _LOGGER.debug("Fetching captures from %s", self._host)
+        json_data = await self._request(
+            "POST", ENDPOINT_CAPTURE_LIST, data={"max_count": str(max_count)}
+        )
+        if not isinstance(json_data, dict):
+            raise VestaApiError(f"Unexpected capture list: {json_data!r:.200}")
+
+        captures = []
+        for row in json_data.get("caprows", []) or []:
+            try:
+                captures.append(CaptureEvent.model_validate(row))
+            except Exception as err:
+                _LOGGER.warning("Failed to parse capture: %s", err)
+        return captures
+
+    async def download_file(self, path: str, retry_count: int = 2) -> bytes:
+        """Download a file (e.g. a capture photo) from the panel.
+
+        Uses the same HTTP client and Basic authentication as the API calls.
+
+        Args:
+            path: Absolute panel path, e.g. "/temp/download/x_001.jpg".
+            retry_count: Number of retries on transient failures.
+
+        Returns:
+            The file content.
+
+        Raises:
+            ValueError: If the path is not a plain absolute panel path.
+            VestaAuthenticationError: If authentication fails (401).
+            VestaConnectionError: If connection fails.
+            VestaApiError: If the panel does not return the file.
+        """
+        if not path.startswith("/") or "://" in path or ".." in path:
+            raise ValueError(f"Refusing to download unexpected path: {path!r}")
+
+        url = f"{self._root_url}{path}"
+        client = await self._get_client()
+        last_error: Exception | None = None
+
+        for attempt in range(retry_count + 1):
+            try:
+                response = await client.get(url, headers={"Accept": "image/*,*/*"})
+            except (httpx.TimeoutException, httpx.HTTPError) as err:
+                last_error = VestaConnectionError(f"Download of {path} failed: {err}")
+                if attempt < retry_count:
+                    await asyncio.sleep(2**attempt)
+                continue
+
+            if response.status_code == 401:
+                raise VestaAuthenticationError(f"Authentication failed for {self._host}")
+            if response.status_code >= 400:
+                raise VestaApiError(f"Download of {path} failed: HTTP {response.status_code}")
+
+            content_type = response.headers.get("content-type", "")
+            if content_type.startswith("image/") or (
+                content_type == "" and response.content[:2] == b"\xff\xd8"
+            ):
+                return response.content
+
+            if _is_session_expired(response.text) and attempt < retry_count:
+                last_error = VestaApiError("Session expired")
+                continue
+            raise VestaApiError(
+                f"Download of {path} returned '{content_type}': {response.text[:100]}"
+            )
+
+        raise last_error or VestaConnectionError(f"Download of {path} failed")
 
     async def set_alarm_mode(self, mode: int, area: int = 1) -> bool:
         """Set the alarm mode.

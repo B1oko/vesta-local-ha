@@ -11,13 +11,14 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
 
 from .client import (
     VestaAuthenticationError,
     VestaConnectionError,
     VestaLocalClient,
 )
-from .const import CONF_USE_SSL, DOMAIN
+from .const import CONF_USE_SSL, DOMAIN, MANUFACTURER, PANEL_MODEL
 from .coordinator import VestaDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS: list[Platform] = [
     Platform.ALARM_CONTROL_PANEL,
     Platform.BINARY_SENSOR,
+    Platform.IMAGE,
     Platform.SENSOR,
 ]
 
@@ -74,6 +76,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: VestaConfigEntry) -> boo
     # Create the coordinator
     coordinator = VestaDataUpdateCoordinator(hass, client, entry)
 
+    # Register the panel device first so zone devices can point to it with
+    # via_device_id (the via_device tuple is deprecated since HA 2026.x).
+    panel_device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, entry.entry_id)},
+        name=f"Vesta Panel ({host})",
+        manufacturer=MANUFACTURER,
+        model=PANEL_MODEL,
+    )
+    coordinator.panel_device_id = panel_device.id
+
+    # Load the bookkeeping of saved and announced camera captures
+    await coordinator.captures.async_load()
+
     # Fetch initial data
     await coordinator.async_config_entry_first_refresh()
 
@@ -82,6 +98,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VestaConfigEntry) -> boo
 
     # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Reload when the options (capture folder...) change
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     _LOGGER.info("Vesta Local integration set up successfully for %s", host)
     return True
@@ -105,10 +124,16 @@ async def async_unload_entry(hass: HomeAssistant, entry: VestaConfigEntry) -> bo
     if unload_ok:
         # Close the client session
         coordinator: VestaDataUpdateCoordinator = entry.runtime_data
+        await coordinator.captures.async_shutdown()
         await coordinator.client.close()
         _LOGGER.debug("Vesta Local integration unloaded successfully")
 
     return unload_ok
+
+
+async def _async_update_listener(hass: HomeAssistant, entry: VestaConfigEntry) -> None:
+    """Reload the integration after its options or credentials change."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: VestaConfigEntry) -> None:

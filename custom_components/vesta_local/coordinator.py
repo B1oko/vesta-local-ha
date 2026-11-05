@@ -18,7 +18,15 @@ from .client import (
     VestaData,
     VestaLocalClient,
 )
-from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
+from .captures import CaptureManager
+from .const import (
+    CONF_CAPTURE_DIR,
+    CONF_SAVE_CAPTURES,
+    DEFAULT_CAPTURE_SUBDIR,
+    DEFAULT_SAVE_CAPTURES,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+)
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -54,6 +62,19 @@ class VestaDataUpdateCoordinator(DataUpdateCoordinator[VestaData]):
         """
         self.client = client
         self.config_entry = config_entry
+        # Device registry id of the panel, set in async_setup_entry; used as
+        # via_device_id of the zone devices.
+        self.panel_device_id: str | None = None
+
+        options = config_entry.options
+        self.captures = CaptureManager(
+            hass,
+            client,
+            config_entry.entry_id,
+            save_captures=options.get(CONF_SAVE_CAPTURES, DEFAULT_SAVE_CAPTURES),
+            capture_dir=options.get(CONF_CAPTURE_DIR)
+            or hass.config.path(*DEFAULT_CAPTURE_SUBDIR),
+        )
 
         super().__init__(
             hass,
@@ -88,6 +109,13 @@ class VestaDataUpdateCoordinator(DataUpdateCoordinator[VestaData]):
                 len(data.devices),
                 len(data.event_log),
             )
+            if any(device.is_camera for device in data.devices):
+                try:
+                    await self.captures.async_update(data)
+                except VestaAuthenticationError:
+                    raise
+                except Exception as err:  # noqa: BLE001 - photos are non-critical
+                    _LOGGER.warning("Failed to update camera captures: %s", err)
             return data
 
         except VestaAuthenticationError as err:
